@@ -197,7 +197,7 @@ function isJoinableRoom(body) {
     return true;
 }
 
-app.post("/photon/create-game", async (req, res) => {
+app.post("/photon/game/create", async (req, res) => {
     res.status(200).send({});
 
     try {
@@ -236,7 +236,7 @@ There is now **1 active match**.`
     }
 });
 
-app.post("/photon/close-game", async (req, res) => {
+app.post("/photon/game/close", async (req, res) => {
     res.status(200).send({});
 
     try {

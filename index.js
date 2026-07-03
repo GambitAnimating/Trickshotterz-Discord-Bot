@@ -163,16 +163,6 @@ function isValidPhotonRequest(req) {
     return req.headers["x-secretkey"] === expectedSecret;
 }
 
-async function sendGameStatusMessage(content) {
-    const channel = await client.channels.fetch(
-        process.env.MATCHMAKING_CHANNEL_ID
-    );
-
-    if (!channel?.isTextBased()) return;
-
-    await channel.send({ content });
-}
-
 function getPhotonGameId(body) {
     return (
         body?.GameId ??
@@ -211,8 +201,54 @@ function isJoinableRoom(body) {
     return true;
 }
 
+let matchStatusMessageId = null;
+
+async function updateMatchStatusMessage() {
+    const channel = await client.channels.fetch(
+        process.env.MATCH_ACTIVITY_CHANNEL_ID
+    );
+
+    if (!channel?.isTextBased()) return;
+
+    const content = buildMatchStatusMessage();
+
+    if (matchStatusMessageId) {
+        try {
+            const existing = await channel.messages.fetch(matchStatusMessageId);
+            await existing.edit({ content });
+            return;
+        } catch {
+            matchStatusMessageId = null;
+        }
+    }
+
+    const message = await channel.send({ content });
+    matchStatusMessageId = message.id;
+}
+
+function buildMatchStatusMessage() {
+    if (activeGames.size === 0) {
+        return `🎮 **Trickshotterz Match Status**
+
+No public matches are currently open.`;
+    }
+
+    const games = [...activeGames.values()]
+        .map((game, index) =>
+`**${index + 1}. ${game.displayName}**
+🌎 Region: ${game.region}`)
+        .join("\n\n");
+
+    return `🎮 **Trickshotterz Match Status**
+
+**Active Matches:** ${activeGames.size}
+
+${games}`;
+}
+
+
 app.post("/photon/game/create", async (req, res) => {
-    res.status(200).send({});
+    res.status(200).json({});
 
     try {
         if (!isValidPhotonRequest(req)) {
@@ -229,42 +265,30 @@ app.post("/photon/game/create", async (req, res) => {
             return;
         }
 
-        const wasEmpty = activeGames.size === 0;
-
         const roomOptions = getRoomOptions(req.body);
-        const maxPlayers = roomOptions?.MaxPlayers ?? "unknown";
+        const props = roomOptions?.CustomRoomProperties ?? {};
+
         const region = req.body?.Region ?? "unknown";
+        const displayName = props.displayName ?? "Unnamed Room";
 
         activeGames.set(gameId, {
             createdAt: Date.now(),
             region,
-            maxPlayers,
+            displayName,
             data: req.body
         });
 
-        await sendMatchActivityMessage(
-        `🎮 **Match opened**
-        **Region:** ${region}
-        **Open for:** ${maxPlayers} players
-        **Active matches:** ${activeGames.size}`
-        );
+        await updateMatchStatusMessage();
 
         console.log(`Game created: ${gameId}. Active games: ${activeGames.size}`);
-        console.log(req.body);
-        console.log(
-  JSON.stringify(
-    req.body.EnterRoomParams.RoomOptions.CustomRoomProperties,
-    null,
-    2
-  )
-);
+        console.dir(req.body, { depth: null });
     } catch (error) {
         console.log("CreateGame webhook error:", error);
     }
 });
 
 app.post("/photon/game/close", async (req, res) => {
-    res.status(200).send({});
+    res.status(200).json({});
 
     try {
         if (!isValidPhotonRequest(req)) {
@@ -279,23 +303,13 @@ app.post("/photon/game/close", async (req, res) => {
             return;
         }
 
-        const game = activeGames.get(gameId);
         const existed = activeGames.delete(gameId);
 
-        const region = game?.region ?? req.body?.Region ?? "unknown";
-        const maxPlayers = game?.maxPlayers ?? "unknown";
-
-        await sendMatchActivityMessage(
-        `🏁 **Match closed**
-        **Region:** ${region}
-        **Was open for:** ${maxPlayers} players
-        **Active matches:** ${activeGames.size}`
-        );
+        await updateMatchStatusMessage();
 
         console.log(
             `Game closed: ${gameId}. Existed: ${existed}. Active games: ${activeGames.size}`
         );
-
     } catch (error) {
         console.log("CloseGame webhook error:", error);
     }

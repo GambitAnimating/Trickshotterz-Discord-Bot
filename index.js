@@ -14,6 +14,8 @@ const client = new Client({
     ]
 });
 
+const activeGames = new Map();
+
 const cooldowns = new Map();
 const COOLDOWN = 30 * 60 * 1000;
 
@@ -133,8 +135,131 @@ ${message ?? ""}`
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use(express.json());
+
 app.get("/", (req, res) => {
     res.send("Trickshotterz Discord Bot is running!");
+});
+
+function isValidPhotonRequest(req) {
+    const expectedSecret = process.env.PHOTON_WEBHOOK_SECRET;
+
+    if (!expectedSecret) return true; // okay for local testing only
+
+    return req.headers["x-secretkey"] === expectedSecret;
+}
+
+async function sendGameStatusMessage(content) {
+    const channel = await client.channels.fetch(
+        process.env.MATCHMAKING_CHANNEL_ID
+    );
+
+    if (!channel?.isTextBased()) return;
+
+    await channel.send({ content });
+}
+
+function getPhotonGameId(body) {
+    return (
+        body?.GameId ??
+        body?.GameID ??
+        body?.gameId ??
+        body?.RoomName ??
+        body?.roomName
+    );
+}
+
+function isJoinableRoom(body) {
+    const roomOptions = body?.EnterRoomParams?.RoomOptions;
+
+    if (!roomOptions) {
+        console.log("Ignoring room with no RoomOptions.");
+        return false;
+    }
+
+    if (roomOptions.IsVisible !== true) {
+        console.log("Ignoring invisible room.");
+        return false;
+    }
+
+    if (roomOptions.IsOpen !== true) {
+        console.log("Ignoring closed room.");
+        return false;
+    }
+
+    const expectedUsers = body?.EnterRoomParams?.ExpectedUsers;
+
+    if (Array.isArray(expectedUsers) && expectedUsers.length > 0) {
+        console.log("Ignoring invite/private room.");
+        return false;
+    }
+
+    return true;
+}
+
+app.post("/photon/create-game", async (req, res) => {
+    res.status(200).send("OK");
+
+    try {
+        if (!isValidPhotonRequest(req)) {
+            console.log("Rejected invalid CreateGame webhook.");
+            return;
+        }
+
+        if (!isJoinableRoom(req.body)) return;
+
+        const gameId = getPhotonGameId(req.body);
+
+        if (!gameId) {
+            console.log("CreateGame missing game id:", req.body);
+            return;
+        }
+
+        const wasEmpty = activeGames.size === 0;
+
+        activeGames.set(gameId, {
+            createdAt: Date.now(),
+            data: req.body
+        });
+
+        console.log(`Game created: ${gameId}. Active games: ${activeGames.size}`);
+
+        if (wasEmpty) {
+            await sendGameStatusMessage(
+`🎮 A Trickshotterz match just opened!
+
+There is now **1 active match**.`
+            );
+        }
+    } catch (error) {
+        console.log("CreateGame webhook error:", error);
+    }
+});
+
+app.post("/photon/close-game", async (req, res) => {
+    res.status(200).send("OK");
+
+    try {
+        if (!isValidPhotonRequest(req)) {
+            console.log("Rejected invalid CloseGame webhook.");
+            return;
+        }
+
+        const gameId = getPhotonGameId(req.body);
+
+        if (!gameId) {
+            console.log("CloseGame missing game id:", req.body);
+            return;
+        }
+
+        const existed = activeGames.delete(gameId);
+
+        console.log(
+            `Game closed: ${gameId}. Existed: ${existed}. Active games: ${activeGames.size}`
+        );
+    } catch (error) {
+        console.log("CloseGame webhook error:", error);
+    }
 });
 
 app.listen(PORT, () => {

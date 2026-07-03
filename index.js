@@ -251,6 +251,13 @@ app.post("/photon/game/create", async (req, res) => {
 
         console.log(`Game created: ${gameId}. Active games: ${activeGames.size}`);
         console.log(req.body);
+        console.log(
+  JSON.stringify(
+    req.body.EnterRoomParams.RoomOptions.CustomRoomProperties,
+    null,
+    2
+  )
+);
     } catch (error) {
         console.log("CreateGame webhook error:", error);
     }

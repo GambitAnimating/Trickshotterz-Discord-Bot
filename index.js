@@ -228,7 +228,7 @@ async function updateMatchStatusMessage() {
 
 function buildMatchStatusMessage() {
     if (activeGames.size === 0) {
-        return `🎮 **Trickshotterz Match Status**
+        return `🎮 **Trickshotterz Match Status** (Live Updated)
 
 No public matches are currently open.`;
     }
@@ -237,7 +237,7 @@ No public matches are currently open.`;
         .map((game, index) =>
 `**${index + 1}. ${game.displayName}**
 🌎 Region: ${game.region}`)
-        .join("\n\n");
+        .join("\n");
 
     return `🎮 **Trickshotterz Match Status**
 

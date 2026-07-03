@@ -132,6 +132,20 @@ ${message ?? ""}`
     });
 });
 
+async function sendMatchActivityMessage(content) {
+    const channel = await client.channels.fetch(
+        process.env.MATCH_ACTIVITY_CHANNEL_ID
+    );
+
+    if (!channel?.isTextBased()) return;
+
+    await channel.send({ content });
+}
+
+function getRoomOptions(body) {
+    return body?.EnterRoomParams?.RoomOptions;
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -217,20 +231,26 @@ app.post("/photon/game/create", async (req, res) => {
 
         const wasEmpty = activeGames.size === 0;
 
+        const roomOptions = getRoomOptions(req.body);
+        const maxPlayers = roomOptions?.MaxPlayers ?? "unknown";
+        const region = req.body?.Region ?? "unknown";
+
         activeGames.set(gameId, {
             createdAt: Date.now(),
+            region,
+            maxPlayers,
             data: req.body
         });
 
+        await sendMatchActivityMessage(
+        `🎮 **Match opened**
+
+        **Region:** ${region}
+        **Open for:** ${maxPlayers} players
+        **Active matches:** ${activeGames.size}`
+        );
+
         console.log(`Game created: ${gameId}. Active games: ${activeGames.size}`);
-
-        if (wasEmpty) {
-            await sendGameStatusMessage(
-`🎮 A Trickshotterz match just opened!
-
-There is now **1 active match**.`
-            );
-        }
     } catch (error) {
         console.log("CreateGame webhook error:", error);
     }
@@ -252,11 +272,24 @@ app.post("/photon/game/close", async (req, res) => {
             return;
         }
 
+        const game = activeGames.get(gameId);
         const existed = activeGames.delete(gameId);
+
+        const region = game?.region ?? req.body?.Region ?? "unknown";
+        const maxPlayers = game?.maxPlayers ?? "unknown";
+
+        await sendMatchActivityMessage(
+        `🏁 **Match closed**
+
+        **Region:** ${region}
+        **Was open for:** ${maxPlayers} players
+        **Active matches:** ${activeGames.size}`
+        );
 
         console.log(
             `Game closed: ${gameId}. Existed: ${existed}. Active games: ${activeGames.size}`
         );
+
     } catch (error) {
         console.log("CloseGame webhook error:", error);
     }

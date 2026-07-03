@@ -5,6 +5,7 @@ import {
     Events,
     MessageFlags
 } from 'discord.js';
+import express from "express";
 
 const client = new Client({
     intents: [
@@ -127,6 +128,17 @@ ${message ?? ""}`
         content: "Matchmaking notification sent!",
         flags: MessageFlags.Ephemeral
     });
+});
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/", (req, res) => {
+    res.send("Trickshotterz Discord Bot is running!");
+});
+
+app.listen(PORT, () => {
+    console.log(`Health server listening on port ${PORT}`);
 });
 
 client.login(process.env.TOKEN);

@@ -244,13 +244,13 @@ app.post("/photon/game/create", async (req, res) => {
 
         await sendMatchActivityMessage(
         `🎮 **Match opened**
-
         **Region:** ${region}
         **Open for:** ${maxPlayers} players
         **Active matches:** ${activeGames.size}`
         );
 
         console.log(`Game created: ${gameId}. Active games: ${activeGames.size}`);
+        console.log(`Room options ${roomOptions}`)
     } catch (error) {
         console.log("CreateGame webhook error:", error);
     }
@@ -280,7 +280,6 @@ app.post("/photon/game/close", async (req, res) => {
 
         await sendMatchActivityMessage(
         `🏁 **Match closed**
-
         **Region:** ${region}
         **Was open for:** ${maxPlayers} players
         **Active matches:** ${activeGames.size}`

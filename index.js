@@ -46,6 +46,25 @@ Whenever you want to play, use:
     }, 60 * 1000);
 }
 
+
+client.on(Events.GuildMemberAdd, async (joinedMember) => {
+    const roleId = process.env.MATCHMAKING_ROLE_ID;
+    console.log(`New member joined! ${joinedMember.displayName}`);
+
+     if (!joinedMember.roles.cache.has(roleId)
+    ) {
+        return;
+    }
+
+    const channel = await client.channels.fetch(
+        process.env.MATCHMAKING_CHANNEL_ID
+    );
+
+    if (!channel?.isTextBased()) return;
+
+    await sendMatchmakingWelcome(channel, joinedMember);
+})
+
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
     if (!client.user) return;
@@ -277,8 +296,7 @@ ${games}`;
 
 function getPhotonPlayerKey(body) {
     return String(
-        body?.Player ??
-        `${body?.ActorNr ?? "unknown"}:${body?.PlayerSlot ?? "unknown"}`
+        body?.UserId ?? "unknown"
     );
 }
 
@@ -358,7 +376,7 @@ app.post("/photon/game/close", async (req, res) => {
 
 app.post("/photon/player/added", async (req, res) => {
     res.status(200).json({});
-console.dir(req.body, { depth: null });
+
     try {
         if (!isValidPhotonRequest(req)) {
             console.log("Rejected invalid PlayerAdded webhook.");

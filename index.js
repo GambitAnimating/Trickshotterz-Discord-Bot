@@ -7,12 +7,19 @@ import {
 } from 'discord.js';
 import express from "express";
 
+import fs from "fs";
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
     ]
 });
+
+const mentionCooldowns = new Map();
+const MENTION_COOLDOWN = 2 * 60 * 1000; // 2 minutes
 
 const activeGames = new Map();
 
@@ -39,108 +46,107 @@ Whenever you want to play, use:
     }, 60 * 1000);
 }
 
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+    if (!client.user) return;
+    if (!message.mentions.has(client.user)) return;
+    if (message.channelId !== process.env.MATCHMAKING_CHANNEL_ID) return;
 
-// client.on(Events.GuildMemberAdd, async (joinedMember) => {
-//     const roleId = process.env.MATCHMAKING_ROLE_ID;
-//     console.log(`New member joined! ${joinedMember.displayName}`);
+    const now = Date.now();
+    const lastUse = mentionCooldowns.get(message.author.id);
 
-//      if (!joinedMember.roles.cache.has(roleId)
-//     ) {
-//         return;
-//     }
-
-//     const channel = await client.channels.fetch(
-//         process.env.MATCHMAKING_CHANNEL_ID
-//     );
-
-//     if (!channel?.isTextBased()) return;
-
-//     await sendMatchmakingWelcome(channel, joinedMember);
-// })
-
-client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
-    const roleId = process.env.MATCHMAKING_ROLE_ID;
-    if (
-        oldMember.roles.cache.has(roleId) ||
-        !newMember.roles.cache.has(roleId)
-    ) {
+    if (lastUse && now - lastUse < MENTION_COOLDOWN) {
         return;
     }
 
-    const channel = await client.channels.fetch(
-        process.env.MATCHMAKING_CHANNEL_ID
+    mentionCooldowns.set(message.author.id, now);
+
+setTimeout(() => {
+    mentionCooldowns.delete(message.author.id);
+}, MENTION_COOLDOWN);
+
+    const reply = await message.reply(
+`**:wave: Looking for people to play?**
+
+Use:
+\`\`\`
+/matchmaking
+\`\`\`
+You can optionally include a short message like:
+> "Need 1 more for 2v2!"
+
+*(This tip will disappear in 1 minute.)*`
     );
 
-    if (!channel?.isTextBased()) return;
-
-   await sendMatchmakingWelcome(channel, newMember);
+    setTimeout(() => {
+        reply.delete().catch(() => {});
+    }, 60 * 1000);
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-
     if (!interaction.isChatInputCommand()) return;
-
     if (interaction.commandName !== "matchmaking") return;
 
-    if (interaction.channelId !== process.env.MATCHMAKING_CHANNEL_ID) {
-        return interaction.reply({
-            content: "Please use this command in the matchmaking channel.",
+    try {
+        if (interaction.channelId !== process.env.MATCHMAKING_CHANNEL_ID) {
+            return interaction.reply({
+                content: "Please use this command in the matchmaking channel.",
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        const now = Date.now();
+        const lastUse = cooldowns.get(interaction.user.id);
+
+        if (lastUse && now - lastUse < COOLDOWN) {
+            const remaining = Math.ceil((COOLDOWN - (now - lastUse)) / 60000);
+
+            return interaction.reply({
+                content: `You can notify matchmaking again in ${remaining} minute(s).`,
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        await interaction.deferReply({
             flags: MessageFlags.Ephemeral
         });
-    }
 
-    const now = Date.now();
+        cooldowns.set(interaction.user.id, now);
 
-    const lastUse = cooldowns.get(interaction.user.id);
+setTimeout(() => {
+    cooldowns.delete(interaction.user.id);
+}, COOLDOWN);
 
-    if (lastUse && now - lastUse < COOLDOWN) {
+        const message = interaction.options.getString("message");
+        const roleMention = `<@&${process.env.MATCHMAKING_ROLE_ID}>`;
+        const displayName = interaction.member?.displayName ?? interaction.user.username;
 
-        const remaining =
-            Math.ceil((COOLDOWN - (now - lastUse)) / 60000);
-
-        return interaction.reply({
-            content: `You can notify matchmaking again in ${remaining} minute(s).`,
-            flags: MessageFlags.Ephemeral
-        });
-    }
-
-    cooldowns.set(interaction.user.id, now);
-
-    const message =
-        interaction.options.getString("message");
-
-    const roleMention =
-        `<@&${process.env.MATCHMAKING_ROLE_ID}>`;
-
-    const sent = await interaction.channel.send({
-
-        content:
+        const sent = await interaction.channel.send({
+            content:
 `${roleMention}
 
-🎮 **${interaction.user.displayName}** is looking for people to play Trickshotterz!
+🎮 **${displayName}** is looking for people to play Trickshotterz!
 
 ${message ?? ""}`
-    });
+        });
 
-    setTimeout(() => {
-        sent.delete().catch(() => {});
-    }, COOLDOWN);
+        setTimeout(() => {
+            sent.delete().catch(() => {});
+        }, COOLDOWN);
 
-    await interaction.reply({
-        content: "Matchmaking notification sent!",
-        flags: MessageFlags.Ephemeral
-    });
+        await interaction.editReply({
+            content: "Matchmaking notification sent!"
+        });
+    } catch (error) {
+        console.log("Matchmaking command error:", error);
+
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({
+                content: "Something went wrong sending the matchmaking notification."
+            }).catch(() => {});
+        }
+    }
 });
-
-async function sendMatchActivityMessage(content) {
-    const channel = await client.channels.fetch(
-        process.env.MATCH_ACTIVITY_CHANNEL_ID
-    );
-
-    if (!channel?.isTextBased()) return;
-
-    await channel.send({ content });
-}
 
 function getRoomOptions(body) {
     return body?.EnterRoomParams?.RoomOptions;
@@ -201,7 +207,27 @@ function isJoinableRoom(body) {
     return true;
 }
 
-let matchStatusMessageId = null;
+const STATUS_FILE = "./match-status.json";
+
+function loadMatchStatusMessageId() {
+    try {
+        if (!fs.existsSync(STATUS_FILE)) return null;
+
+        const data = JSON.parse(fs.readFileSync(STATUS_FILE, "utf8"));
+        return data.matchStatusMessageId ?? null;
+    } catch {
+        return null;
+    }
+}
+
+function saveMatchStatusMessageId(messageId) {
+    fs.writeFileSync(
+        STATUS_FILE,
+        JSON.stringify({ matchStatusMessageId: messageId }, null, 2)
+    );
+}
+
+let matchStatusMessageId = loadMatchStatusMessageId();
 
 async function updateMatchStatusMessage() {
     const channel = await client.channels.fetch(
@@ -224,22 +250,25 @@ async function updateMatchStatusMessage() {
 
     const message = await channel.send({ content });
     matchStatusMessageId = message.id;
+    saveMatchStatusMessageId(message.id);
 }
 
 function buildMatchStatusMessage() {
     if (activeGames.size === 0) {
-        return `# :video_game: Trickshotterz Match Status (Live Updated)
+        return `🎮 **Trickshotterz Match Status** *(Live Updated)*
+
 No public matches are currently open.`;
     }
 
     const games = [...activeGames.values()]
         .map((game, index) =>
 `**${index + 1}. ${game.displayName}**
-🌎 Region: ${game.region}
-👥 Players: ${game.players?.size ?? 0}`)
+> 🌎 Region: **${game.region}**
+> 👥 Players: **${game.players?.size ?? 0}**`
+        )
         .join("\n\n");
 
-    return `# :video_game: Trickshotterz Match Status (Live Updated)
+    return `🎮 **Trickshotterz Match Status** *(Live Updated)*
 
 **Active Matches:** ${activeGames.size}
 
@@ -312,10 +341,15 @@ app.post("/photon/game/close", async (req, res) => {
 
         const existed = activeGames.delete(gameId);
 
+        if (!existed) {
+            console.log(`CloseGame for untracked game: ${gameId}`);
+            return;
+        }
+
         await updateMatchStatusMessage();
 
         console.log(
-            `Game closed: ${gameId}. Existed: ${existed}. Active games: ${activeGames.size}`
+            `Game closed: ${gameId}. Active games: ${activeGames.size}`
         );
     } catch (error) {
         console.log("CloseGame webhook error:", error);
@@ -346,9 +380,12 @@ app.post("/photon/player/added", async (req, res) => {
         }
 
         const playerKey = getPhotonPlayerKey(req.body);
+        const before = game.players.size;
         game.players.add(playerKey);
 
-        await updateMatchStatusMessage();
+        if (game.players.size !== before) {
+            await updateMatchStatusMessage();
+        }
 
         console.log(
             `Player added to ${gameId}. Players: ${game.players.size}`
@@ -382,9 +419,12 @@ app.post("/photon/player/removed", async (req, res) => {
         }
 
         const playerKey = getPhotonPlayerKey(req.body);
+        const before = game.players.size;
         game.players.delete(playerKey);
 
-        await updateMatchStatusMessage();
+        if (game.players.size !== before) {
+            await updateMatchStatusMessage();
+        }
 
         console.log(
             `Player removed from ${gameId}. Players: ${game.players.size}`

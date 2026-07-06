@@ -290,7 +290,6 @@ No public matches are currently open.`;
     return `🎮 **Trickshotterz Match Status** *(Live Updated)*
 
 **Active Matches:** ${activeGames.size}
-
 ${games}`;
 }
 

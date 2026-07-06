@@ -229,22 +229,29 @@ async function updateMatchStatusMessage() {
 function buildMatchStatusMessage() {
     if (activeGames.size === 0) {
         return `# :video_game: Trickshotterz Match Status (Live Updated)
-        No public matches are currently open.`;
+No public matches are currently open.`;
     }
 
     const games = [...activeGames.values()]
         .map((game, index) =>
 `**${index + 1}. ${game.displayName}**
-    🌎 Region: ${game.region}`)
-        .join("\n");
+🌎 Region: ${game.region}
+👥 Players: ${game.players?.size ?? 0}`)
+        .join("\n\n");
 
     return `# :video_game: Trickshotterz Match Status (Live Updated)
-    
-    **Active Matches:** ${activeGames.size}
-    
-    ${games}`;
+
+**Active Matches:** ${activeGames.size}
+
+${games}`;
 }
 
+function getPhotonPlayerKey(body) {
+    return String(
+        body?.Player ??
+        `${body?.ActorNr ?? "unknown"}:${body?.PlayerSlot ?? "unknown"}`
+    );
+}
 
 app.post("/photon/game/create", async (req, res) => {
     res.status(200).json({});
@@ -274,6 +281,7 @@ app.post("/photon/game/create", async (req, res) => {
             createdAt: Date.now(),
             region,
             displayName,
+            players: new Set(),
             data: req.body
         });
 
@@ -311,6 +319,78 @@ app.post("/photon/game/close", async (req, res) => {
         );
     } catch (error) {
         console.log("CloseGame webhook error:", error);
+    }
+});
+
+app.post("/photon/player/added", async (req, res) => {
+    res.status(200).json({});
+
+    try {
+        if (!isValidPhotonRequest(req)) {
+            console.log("Rejected invalid PlayerAdded webhook.");
+            return;
+        }
+
+        const gameId = getPhotonGameId(req.body);
+
+        if (!gameId) {
+            console.log("PlayerAdded missing game id:", req.body);
+            return;
+        }
+
+        const game = activeGames.get(gameId);
+
+        if (!game) {
+            console.log(`PlayerAdded for unknown game: ${gameId}`);
+            return;
+        }
+
+        const playerKey = getPhotonPlayerKey(req.body);
+        game.players.add(playerKey);
+
+        await updateMatchStatusMessage();
+
+        console.log(
+            `Player added to ${gameId}. Players: ${game.players.size}`
+        );
+    } catch (error) {
+        console.log("PlayerAdded webhook error:", error);
+    }
+});
+
+app.post("/photon/player/removed", async (req, res) => {
+    res.status(200).json({});
+
+    try {
+        if (!isValidPhotonRequest(req)) {
+            console.log("Rejected invalid PlayerRemoved webhook.");
+            return;
+        }
+
+        const gameId = getPhotonGameId(req.body);
+
+        if (!gameId) {
+            console.log("PlayerRemoved missing game id:", req.body);
+            return;
+        }
+
+        const game = activeGames.get(gameId);
+
+        if (!game) {
+            console.log(`PlayerRemoved for unknown game: ${gameId}`);
+            return;
+        }
+
+        const playerKey = getPhotonPlayerKey(req.body);
+        game.players.delete(playerKey);
+
+        await updateMatchStatusMessage();
+
+        console.log(
+            `Player removed from ${gameId}. Players: ${game.players.size}`
+        );
+    } catch (error) {
+        console.log("PlayerRemoved webhook error:", error);
     }
 });
 

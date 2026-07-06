@@ -358,7 +358,7 @@ app.post("/photon/game/close", async (req, res) => {
 
 app.post("/photon/player/added", async (req, res) => {
     res.status(200).json({});
-
+console.dir(req.body, { depth: null });
     try {
         if (!isValidPhotonRequest(req)) {
             console.log("Rejected invalid PlayerAdded webhook.");

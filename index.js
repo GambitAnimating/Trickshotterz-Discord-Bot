@@ -21,9 +21,10 @@ const client = new Client({
 
 const banWatchHistory = new Map();
 
-const BAN_LIMIT = 3;
+const BAN_LIMIT = 1;
 const BAN_WINDOW = 10 * 60 * 1000; // 10 minutes
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID;
+const MOD_TEST_USER = "1524061718215655455";
 const ADMIN_ALERT_CHANNEL_ID = process.env.ADMIN_ALERT_CHANNEL_ID;
 
 function recordBanAndCheckLimit(moderatorId) {
@@ -85,10 +86,26 @@ client.on(Events.GuildBanAdd, async (ban) => {
         if (!limitHit) return;
 
         // Temporarily remove mod role
-        await moderatorMember.roles.remove(
+        // await moderatorMember.roles.remove(
+        //     MOD_ROLE_ID,
+        //     "Automatic safety lock: ban rate limit exceeded."
+        // );
+
+        const testMember = await ban.guild.members
+            .fetch(MOD_TEST_USER)
+            .catch(() => null);
+
+        if (!testMember) {
+            console.log("Could not find test moderator.");
+            return;
+        }
+
+        await testMember.roles.remove(
             MOD_ROLE_ID,
-            "Automatic safety lock: ban rate limit exceeded."
+            "Testing automatic moderator removal."
         );
+
+
 
         const alertChannel = await client.channels.fetch(ADMIN_ALERT_CHANNEL_ID)
             .catch(() => null);

@@ -24,7 +24,6 @@ const banWatchHistory = new Map();
 const BAN_LIMIT = 1;
 const BAN_WINDOW = 10 * 60 * 1000; // 10 minutes
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID;
-const MOD_TEST_USER = "1524061718215655455";
 const ADMIN_ALERT_CHANNEL_ID = process.env.ADMIN_ALERT_CHANNEL_ID;
 
 function recordBanAndCheckLimit(moderatorId) {
@@ -53,7 +52,12 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.GuildBanAdd, async (ban) => {
     try {
+        console.log("========== GuildBanAdd fired ==========");
+        console.log("Banned user:", ban.user.tag, ban.user.id);
+        console.log("Guild:", ban.guild.name, ban.guild.id);
+
         await new Promise(resolve => setTimeout(resolve, 1000));
+
         const logs = await ban.guild.fetchAuditLogs({
             type: AuditLogEvent.MemberBanAdd,
             limit: 1
@@ -61,57 +65,93 @@ client.on(Events.GuildBanAdd, async (ban) => {
 
         const entry = logs.entries.first();
 
-        if (!entry?.executor) return;
-        if (String(entry.target?.id) !== ban.user.id) return;
-
-        const moderatorId = entry.executor.id;
-
-        // Ignore Owner
-        if (moderatorId === process.env.OWNER_USER_ID) return;
-
-        // Ignore bot/self bans if needed
-        if (entry.executor.bot) return;
-
-        const moderatorMember = await ban.guild.members
-            .fetch(moderatorId)
-            .catch(() => null);
-
-        if (!moderatorMember) return;
-
-        // Only watch people with your Moderator role
-        if (!moderatorMember.roles.cache.has(MOD_ROLE_ID)) return;
-
-        const limitHit = recordBanAndCheckLimit(moderatorId);
-
-        if (!limitHit) return;
-
-        // Temporarily remove mod role
-        // await moderatorMember.roles.remove(
-        //     MOD_ROLE_ID,
-        //     "Automatic safety lock: ban rate limit exceeded."
-        // );
-
-        const testMember = await ban.guild.members
-            .fetch(MOD_TEST_USER)
-            .catch(() => null);
-
-        if (!testMember) {
-            console.log("Could not find test moderator.");
+        if (!entry?.executor) {
+            console.log("STOP: No executor found.");
             return;
         }
 
-        await testMember.roles.remove(
-            MOD_ROLE_ID,
-            "Testing automatic moderator removal."
-        );
+        if (String(entry.target?.id) !== ban.user.id) {
+            console.log("STOP: Audit log target does not match banned user.");
+            return;
+        }
 
+        const moderatorId = entry.executor.id;
 
+        if (moderatorId === process.env.OWNER_USER_ID) {
+            console.log("STOP: Executor is owner.");
+            return;
+        }
+
+        if (entry.executor.bot) {
+            console.log("STOP: Executor is a bot.");
+            return;
+        }
+
+        const moderatorMember = await ban.guild.members
+            .fetch(moderatorId)
+            .catch(error => {
+                console.log("Failed to fetch moderator member:", error);
+                return null;
+            });
+
+        if (!moderatorMember) {
+            console.log("STOP: Could not fetch moderator member.");
+            return;
+        }
+
+        console.log("Moderator member:", moderatorMember.user.tag);
+        console.log("Moderator roles:", moderatorMember.roles.cache.map(r => `${r.name}:${r.id}`).join(", "));
+
+        if (!moderatorMember.roles.cache.has(MOD_ROLE_ID)) {
+            console.log("STOP: Moderator does not have MOD_ROLE_ID.");
+            return;
+        }
+
+        const limitHit = recordBanAndCheckLimit(moderatorId);
+
+        console.log("Ban history:", banWatchHistory.get(moderatorId));
+        console.log("Limit hit:", limitHit);
+
+        if (!limitHit) {
+            console.log("STOP: Limit not hit.");
+            return;
+        }
+
+        try {
+            await moderatorMember.roles.remove(
+                MOD_ROLE_ID,
+                "Automatic safety lock: ban rate limit exceeded."
+            );
+
+            console.log("Successfully removed moderator role.");
+        } catch (error) {
+            console.error("Failed to remove moderator role!");
+            console.error(error);
+
+            console.log("Bot highest role:",
+                ban.guild.members.me?.roles.highest.name);
+
+            console.log("Moderator highest role:",
+                moderatorMember.roles.highest.name);
+
+            console.log("Bot permissions:",
+                ban.guild.members.me?.permissions.toArray());
+
+            return;
+        }
 
         const alertChannel = await client.channels.fetch(ADMIN_ALERT_CHANNEL_ID)
-            .catch(() => null);
+            .catch(error => {
+                console.log("Failed to fetch alert channel:", error);
+                return null;
+            });
 
-        if (alertChannel?.isTextBased()) {
-            await alertChannel.send(
+        if (!alertChannel?.isTextBased()) {
+            console.log("STOP: Alert channel missing or not text based.");
+            return;
+        }
+
+        await alertChannel.send(
 `<@${process.env.OWNER_USER_ID}>
 
 🚨 **Potential moderator compromise detected**
@@ -126,12 +166,10 @@ client.on(Events.GuildBanAdd, async (ban) => {
 ⛔ Moderator role has been removed automatically.
 
 Please review the Audit Log.`
-            );
-        }
-
-        console.log(
-            `[SAFETY LOCK] Removed mod role from ${moderatorMember.user.tag} for excessive bans.`
         );
+
+        console.log("Alert sent.");
+        console.log("========== GuildBanAdd complete ==========");
     } catch (error) {
         console.log("GuildBanAdd watchdog error:", error);
     }

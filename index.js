@@ -3,7 +3,8 @@ import {
     Client,
     GatewayIntentBits,
     Events,
-    MessageFlags
+    MessageFlags,
+    AuditLogEvent
 } from 'discord.js';
 import express from "express";
 
@@ -18,6 +19,25 @@ const client = new Client({
     ]
 });
 
+const banWatchHistory = new Map();
+
+const BAN_LIMIT = 3;
+const BAN_WINDOW = 10 * 60 * 1000; // 10 minutes
+const MOD_ROLE_ID = process.env.MOD_ROLE_ID;
+const ADMIN_ALERT_CHANNEL_ID = process.env.ADMIN_ALERT_CHANNEL_ID;
+
+function recordBanAndCheckLimit(moderatorId) {
+    const now = Date.now();
+
+    const recentBans = (banWatchHistory.get(moderatorId) ?? [])
+        .filter(time => now - time < BAN_WINDOW);
+
+    recentBans.push(now);
+    banWatchHistory.set(moderatorId, recentBans);
+
+    return recentBans.length === BAN_LIMIT;
+}
+
 const mentionCooldowns = new Map();
 const MENTION_COOLDOWN = 2 * 60 * 1000; // 2 minutes
 
@@ -28,6 +48,76 @@ const COOLDOWN = 30 * 60 * 1000;
 
 client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user.tag}`);
+});
+
+client.on(Events.GuildBanAdd, async (ban) => {
+    try {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const logs = await ban.guild.fetchAuditLogs({
+            type: AuditLogEvent.MemberBanAdd,
+            limit: 1
+        });
+
+        const entry = logs.entries.first();
+
+        if (!entry?.executor) return;
+        if (String(entry.target?.id) !== ban.user.id) return;
+
+        const moderatorId = entry.executor.id;
+
+        // Ignore Owner
+        if (moderatorId === process.env.OWNER_USER_ID) return;
+
+        // Ignore bot/self bans if needed
+        if (entry.executor.bot) return;
+
+        const moderatorMember = await ban.guild.members
+            .fetch(moderatorId)
+            .catch(() => null);
+
+        if (!moderatorMember) return;
+
+        // Only watch people with your Moderator role
+        if (!moderatorMember.roles.cache.has(MOD_ROLE_ID)) return;
+
+        const limitHit = recordBanAndCheckLimit(moderatorId);
+
+        if (!limitHit) return;
+
+        // Temporarily remove mod role
+        await moderatorMember.roles.remove(
+            MOD_ROLE_ID,
+            "Automatic safety lock: ban rate limit exceeded."
+        );
+
+        const alertChannel = await client.channels.fetch(ADMIN_ALERT_CHANNEL_ID)
+            .catch(() => null);
+
+        if (alertChannel?.isTextBased()) {
+            await alertChannel.send(
+`<@${process.env.OWNER_USER_ID}>
+
+🚨 **Potential moderator compromise detected**
+
+👮 Moderator: ${moderatorMember}
+🆔 ${moderatorMember.id}
+
+🔨 Recent ban count: ${banWatchHistory.get(moderatorId).length}
+
+❌ Latest banned user: ${ban.user}
+
+⛔ Moderator role has been removed automatically.
+
+Please review the Audit Log.`
+            );
+        }
+
+        console.log(
+            `[SAFETY LOCK] Removed mod role from ${moderatorMember.user.tag} for excessive bans.`
+        );
+    } catch (error) {
+        console.log("GuildBanAdd watchdog error:", error);
+    }
 });
 
 async function sendMatchmakingWelcome(channel, member) {
@@ -45,7 +135,6 @@ Whenever you want to play, use:
         message.delete().catch(() => {});
     }, 60 * 1000);
 }
-
 
 client.on(Events.GuildMemberAdd, async (joinedMember) => {
     const roleId = process.env.MATCHMAKING_ROLE_ID;

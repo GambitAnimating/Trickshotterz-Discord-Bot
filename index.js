@@ -22,7 +22,7 @@ const client = new Client({
 
 const banWatchHistory = new Map();
 
-const BAN_LIMIT = 1;
+const BAN_LIMIT = 5;
 const BAN_WINDOW = 10 * 60 * 1000; // 10 minutes
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID;
 const ADMIN_ALERT_CHANNEL_ID = process.env.ADMIN_ALERT_CHANNEL_ID;
